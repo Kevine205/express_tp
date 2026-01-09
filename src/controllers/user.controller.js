@@ -2,6 +2,7 @@ import { UserService } from "#services/user.service";
 import { UserDto } from "#dto/user.dto";
 import { validateData } from "#lib/validate";
 import { registerSchema, loginSchema } from "#schemas/user.schema";
+import * as emailService from "#services/email.service"; 
 
 export class UserController {
   /**
@@ -31,7 +32,7 @@ export class UserController {
     const validatedData = validateData(loginSchema, req.body);
     const { email, password } = validatedData;
 
-    // 2. Récupération des infos de contexte pour l'historique (Lead Architect)
+    // 2. Récupération des infos de contexte pour l'historique
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.get('user-agent');
 
@@ -71,6 +72,68 @@ export class UserController {
     res.json({
       success: true,
       user: UserDto.transform(user),
+    });
+  }
+  
+  /**
+   * Mot de passe oublié
+   */
+  static async forgotPassword(req, res) {
+    const { email } = req.body;
+
+    // 1. Appel au service pour créer le token en base
+    const token = await UserService.createPasswordResetToken(email);
+
+
+    // Le token est dans le mail, PAS dans la réponse JSON
+    if (token) {
+      await emailService.sendResetEmail(email, token);
+    }
+
+    // Réponse neutre pour la sécurité (ne pas confirmer si l'email existe)
+    res.json({
+      success: true,
+      message: "Si ce compte existe, un e-mail de récupération a été envoyé.",
+    });
+  }
+
+  /**
+   * Vérification de l'email
+   */
+  static async verifyEmail(req, res) {
+  
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Token manquant" });
+    }
+
+    // Appel au service pour valider
+    await UserService.verifyEmail(token);
+
+    res.json({
+      success: true,
+      message: "Votre e-mail a été vérifié avec succès !",
+    });
+  }
+
+  /**
+   * Déconnexion 
+   * Invalide le Refresh Token en base de données
+   */
+  static async logout(req, res) {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, message: "Token requis" });
+    }
+
+  
+    await UserService.logout(refreshToken);
+
+    res.json({
+      success: true,
+      message: "Déconnexion réussie et session invalidée.",
     });
   }
 }
