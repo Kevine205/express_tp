@@ -1,0 +1,81 @@
+datasource db {
+  provider = "sqlite"
+    url      = env("DATABASE_URL")
+
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                 Int       @id @default(autoincrement())
+  email              String    @unique
+  password           String?   // Optionnel pour OAuth
+  name               String?
+  emailVerifiedAt    DateTime? // Date de vérification (null = non vérifié)
+  twoFactorEnabledAt DateTime? // Date d'activation 2FA
+  twoFactorSecret    String?   // Secret TOTP pour 2FA
+  disabledAt         DateTime? // Date de désactivation (null = actif)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  oauthAccounts      OAuthAccount[]
+  refreshTokens      RefreshToken[]
+  loginHistories     LoginHistory[]
+  verificationTokens VerificationToken[]
+  resetTokens        PasswordResetToken[]
+}
+
+model OAuthAccount {
+  id          Int      @id @default(autoincrement())
+  provider    String   // 'google' ou 'github'
+  providerId  String
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId]) // Combinaison unique
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime? // Date de révocation (null = actif)
+  createdAt DateTime  @default(now())
+}
+
+model BlacklistedAccessToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  expiresAt DateTime // Date d'expiration originale pour nettoyage
+  createdAt DateTime @default(now())
+}
+
+model VerificationToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+}
+
+model LoginHistory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ip        String
+  userAgent String
+  success   Boolean  // True si réussite, false si échec
+  createdAt DateTime @default(now())
+}
