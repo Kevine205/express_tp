@@ -1,8 +1,8 @@
 import prisma from "#lib/prisma";
 import { hashPassword, verifyPassword } from "#lib/password";
 import { ConflictException, UnauthorizedException, NotFoundException } from "#lib/exceptions";
-import { generateAccessToken, generateRefreshToken } from '#lib/jwt';
-import crypto from 'crypto';  
+import { generateAccessToken, generateRefreshToken } from '#lib/jwt'; 
+import { generateLongToken } from "../lib/token.js";
 
 
 export class UserService {
@@ -120,14 +120,15 @@ export class UserService {
   }
 
   /**
-   * Générer un token pour mot de passe oublié
+   * Générer un token pour mot de passe oublié 
    */
   static async createPasswordResetToken(email) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return null;
 
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 3600000);
+  
+    const token = generateLongToken(); 
+    const expiresAt = new Date(Date.now() + 3600000); 
 
     await prisma.passwordResetToken.create({
       data: { token, userId: user.id, expiresAt }
@@ -137,7 +138,7 @@ export class UserService {
   }
 
   /**
-   * Vérification de l'adresse email
+   * Vérification de l'adresse email 
    */
   static async verifyEmail(token) {
     const tokenRecord = await prisma.verificationToken.findUnique({
@@ -154,8 +155,33 @@ export class UserService {
         data: { emailVerifiedAt: new Date() }
       }),
       prisma.verificationToken.delete({
-        where: { token }
+        where: { id: tokenRecord.id } 
       })
     ]);
   }
-} 
+
+  /**
+   * Réinitialisation finale du mot de passe 
+   */
+  static async resetPassword(token, newPassword) {
+    const tokenRecord = await prisma.passwordResetToken.findUnique({
+      where: { token }
+    });
+
+    if (!tokenRecord || tokenRecord.expiresAt < new Date()) {
+      throw new UnauthorizedException("Lien invalide ou expiré");
+    }
+
+    const hashedPassword = await hashPassword(newPassword);
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: tokenRecord.userId },
+        data: { password: hashedPassword }
+      }),
+      prisma.passwordResetToken.delete({
+        where: { id: tokenRecord.id }
+      })
+    ]);
+  }
+}
