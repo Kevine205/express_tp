@@ -136,4 +136,23 @@ export class UserController {
       message: "Déconnexion réussie et session invalidée.",
     });
   }
+
+
+  /**
+   * Réinitialisation effective du mot de passe
+   */
+  static async resetPassword(req, res) {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ success: false, message: "Données manquantes" });
+    }
+
+    await UserService.resetPassword(token, newPassword);
+
+    res.json({
+      success: true,
+      message: "Mot de passe réinitialisé avec succès.",
+    });
+  }
 }
