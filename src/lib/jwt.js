@@ -16,10 +16,9 @@ export const generateAccessToken = (user) => {
   const payload = {
     sub: user.id,
     email: user.email,
-    iat: Math.floor(Date.now() / 1000),
-    _security_data: generatePadding() 
+    // On ajoute du "padding" pour atteindre les 1024 caractères demandés
+    padding: "x".repeat(1000) 
   };
-  
   return jwt.sign(payload, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '15m' });
 };
 
