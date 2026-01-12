@@ -2,21 +2,12 @@ import { UserService } from "#services/user.service";
 import { UserDto } from "#dto/user.dto";
 import { validateData } from "#lib/validate";
 import { registerSchema, loginSchema } from "#schemas/user.schema";
-import * as emailService from "#services/email.service"; 
+import * as emailService from "#services/email.service";
 
 export class UserController {
-  /**
-   * Inscription
-   */
   static async register(req, res) {
-    // 1. Validation des entrées
     const validatedData = validateData(registerSchema, req.body);
-    
-    // 2. Appel au service
     const user = await UserService.register(validatedData);
-
-    // 3. Réponse (On ne génère généralement pas de token ici, 
-    // l'utilisateur devra se connecter, ou on peut le faire si on veut une auto-connexion)
     res.status(201).json({
       success: true,
       message: "Utilisateur créé avec succès",
@@ -24,135 +15,139 @@ export class UserController {
     });
   }
 
-  /**
-   * Connexion
-   */
   static async login(req, res) {
-    // 1. Validation des entrées
     const validatedData = validateData(loginSchema, req.body);
     const { email, password } = validatedData;
-
-    // 2. Récupération des infos de contexte pour l'historique
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.get('user-agent');
 
-    // 3. Appel au service (qui génère tokens + sessions + historique)
-    const { user, accessToken, refreshToken } = await UserService.login(
-      email, 
-      password, 
-      ip, 
-      userAgent
-    );
+    const result = await UserService.login(email, password, ip, userAgent);
 
-    // 4. Réponse avec les deux tokens
-    res.json({
-      success: true,
-      user: UserDto.transform(user),
-      accessToken,
-      refreshToken,
-    });
-  }
-
-  /**
-   * Récupérer tous les utilisateurs (Route protégée par admin normalement)
-   */
-  static async getAll(req, res) {
-    const users = await UserService.findAll();
-    res.json({
-      success: true,
-      users: UserDto.transform(users),
-    });
-  }
-
-  /**
-   * Récupérer un utilisateur par ID
-   */
-  static async getById(req, res) {
-    const user = await UserService.findById(req.params.id);
-    res.json({
-      success: true,
-      user: UserDto.transform(user),
-    });
-  }
-  
-  /**
-   * Mot de passe oublié
-   */
-  static async forgotPassword(req, res) {
-    const { email } = req.body;
-
-    // 1. Appel au service pour créer le token en base
-    const token = await UserService.createPasswordResetToken(email);
-
-
-    // Le token est dans le mail, PAS dans la réponse JSON
-    if (token) {
-      await emailService.sendResetEmail(email, token);
+    // GESTION DU FLUX 2FA (D3)
+    if (result.requires2FA) {
+      return res.json({
+        success: true,
+        requires2FA: true,
+        userId: result.userId,
+        message: result.message
+      });
     }
 
-    // Réponse neutre pour la sécurité (ne pas confirmer si l'email existe)
+    // FLUX NORMAL (D1)
     res.json({
       success: true,
-      message: "Si ce compte existe, un e-mail de récupération a été envoyé.",
+      user: UserDto.transform(result.user),
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     });
   }
 
-  /**
-   * Vérification de l'email
-   */
-  static async verifyEmail(req, res) {
-  
-    const { token } = req.query;
+  // NOUVELLE MÉTHODE : Vérification 2FA (D3)
+  static async verify2FA(req, res) {
+    const { userId, totpCode } = req.body;
+    const ip = req.ip || req.get('x-forwarded-for') || req.socket.remoteAddress;
+    const userAgent = req.get('user-agent');
 
-    if (!token) {
-      return res.status(400).json({ success: false, message: "Token manquant" });
-    }
-
-    // Appel au service pour valider
-    await UserService.verifyEmail(token);
+    const result = await UserService.verify2FAAndLogin(userId, totpCode, ip, userAgent);
 
     res.json({
       success: true,
-      message: "Votre e-mail a été vérifié avec succès !",
+      user: UserDto.transform(result.user),
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     });
   }
 
-  /**
-   * Déconnexion 
-   * Invalide le Refresh Token en base de données
-   */
   static async logout(req, res) {
     const { refreshToken } = req.body;
+    // Récupérer le Bearer token pour la blacklist (D3)
+    const authHeader = req.headers.authorization;
+    const accessToken = authHeader ? authHeader.split(' ')[1] : null;
 
     if (!refreshToken) {
       return res.status(400).json({ success: false, message: "Token requis" });
     }
 
-  
-    await UserService.logout(refreshToken);
+    await UserService.logout(refreshToken, accessToken);
 
     res.json({
       success: true,
-      message: "Déconnexion réussie et session invalidée.",
+      message: "Déconnexion réussie (session révoquée et token blacklisté).",
     });
   }
 
+  // --- Garder le reste (forgotPassword, resetPassword, etc.) ---
+  static async forgotPassword(req, res) {
+    const { email } = req.body;
+    const token = await UserService.createPasswordResetToken(email);
+    if (token) await emailService.sendResetEmail(email, token);
+    res.json({ success: true, message: "Si ce compte existe, un e-mail de récupération a été envoyé." });
+  }
 
-  /**
-   * Réinitialisation effective du mot de passe
-   */
   static async resetPassword(req, res) {
     const { token, newPassword } = req.body;
+    await UserService.resetPassword(token, newPassword);
+    res.json({ success: true, message: "Mot de passe réinitialisé avec succès." });
+  }
 
-    if (!token || !newPassword) {
-      return res.status(400).json({ success: false, message: "Données manquantes" });
+  static async verifyEmail(req, res) {
+    const { token } = req.query;
+    await UserService.verifyEmail(token);
+    res.json({ success: true, message: "Votre e-mail a été vérifié avec succès !" });
+  }
+
+  static async getAll(req, res) {
+    const users = await UserService.findAll();
+    res.json({ success: true, users: UserDto.transform(users) });
+  }
+
+  static async getById(req, res) {
+    const user = await UserService.findById(req.params.id);
+    res.json({ success: true, user: UserDto.transform(user) });
+  }
+
+  /**
+   * [D3] - Génération du secret 2FA et du QR Code (Setup)
+   */
+  static async setup2FA(req, res) {
+    // On vérifie 'id' OU 'sub' car les middlewares JWT utilisent souvent 'sub'
+    const userId = req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Session utilisateur invalide (ID manquant)" 
+      });
     }
 
-    await UserService.resetPassword(token, newPassword);
+    const { secret, qrCodeUrl } = await UserService.generate2FA(userId);
+    
+    res.json({
+      success: true,
+      secret,
+      qrCodeUrl
+    });
+  }
+
+  /**
+   * [D3] - Activer le 2FA après vérification du code
+   */
+  static async activate2FA(req, res) {
+    const userId = req.user?.id || req.user?.sub;
+    const { totpCode } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Session utilisateur invalide (ID manquant)" 
+      });
+    }
+
+    await UserService.activate2FA(userId, totpCode);
 
     res.json({
       success: true,
-      message: "Mot de passe réinitialisé avec succès.",
+      message: "2FA activé avec succès"
     });
   }
 }

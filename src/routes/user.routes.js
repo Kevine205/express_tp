@@ -18,7 +18,7 @@ router.post('/verify-2fa', UserController.verify2FA);
 
 // [DÉVELOPPEUR 3] - Configuration de la sécurité
 router.post('/2fa/setup', authMiddleware, UserController.setup2FA);    // Générer le QR Code
-router.post('/2fa/activate', authMiddleware, UserController.confirm2FA); // Activer le 2FA
+router.post('/2fa/activate', authMiddleware, UserController.activate2FA); // Activer le 2FA
 
 // La déconnexion doit être protégée pour pouvoir blacklister le token actuel
 router.post('/logout', authMiddleware, UserController.logout);
